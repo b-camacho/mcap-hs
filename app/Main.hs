@@ -6,6 +6,7 @@ import Data.Word
 import System.IO.Unsafe
 import Data.Binary.Put
 import qualified Data.ByteString as BS
+import qualified Data.ByteString.Lazy as BL
 import Data.ByteString.Lazy (fromChunks, ByteString)
 import Data.Char
 import Debug.Trace
@@ -75,39 +76,45 @@ getMessage size = do
 getRecord :: Get Record
 getRecord = do
     opcode <- getWord8
-    size <- getWord64le
-    let
-        size = fromIntegral size
-        in case opcode of {
-        0x01 -> RecordHeader <$> getHeader;
-        0x03 -> RecordSchema <$> getSchema;
-        0x04 -> RecordChannel <$> getChannel;
-        0x05 -> RecordMessage <$> getMessage size;
-        _ -> RecordUnknown <$> getByteString size;
-        }
+    if opcode == 0x89
+        then
+            trace "got magic" RecordUnknown <$> getByteString 7;
+        else
+            do
+            sizeBytes <- getWord64le
+            let
+                size =  fromIntegral sizeBytes
+                in
+                case trace ("opcode: " ++ show opcode ++ " size " ++ show size) opcode of {
+                    0x01 -> trace "recordheader" RecordHeader <$> getHeader;
+                    0x03 -> RecordSchema <$> getSchema;
+                    0x04 -> RecordChannel <$> getChannel;
+                    0x05 -> RecordMessage <$> getMessage size;
+                    0x89 -> trace "magic" RecordUnknown <$> getByteString 8;
+                    _ -> trace "record unk" RecordUnknown <$> getByteString size;
+                }
 
 getRecords :: Get [Record]
 getRecords = do
-    empty <-isEmpty
-    if empty
-        then return []
+    empty <- isEmpty
+    if empty then return []
         else
             (do
                 record <- getRecord
                 records <- getRecords
                 return $ record : records)
 
-parseMcap :: BS.ByteString -> [Record]
-parseMcap bs = runGet getRecords (fromChunks [bs])
+parseMcap :: BL.ByteString -> [Record]
+parseMcap = runGet getRecords
 
+
+onlyKnowns (RecordUnknown a) = False
+onlyKnowns _ = True
 
 main :: IO ()
 main = do
-    input <- BS.readFile "a.mcap"
-    let (magic, rest) = BS.splitAt 8 input
-        in
-        if not $ isMcap magic then putStrLn "not an mcap file: bad magic"
-        else let records = parseMcap rest
-            in print $ head records
+    input <- BL.readFile "b.mcap"
+    let records = parseMcap input
+            in print $ filter onlyKnowns records
 
 
