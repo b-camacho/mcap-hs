@@ -3,8 +3,10 @@
 module Main where
 
 import Data.Word
+import System.IO.Unsafe
 import Data.Binary.Put
 import qualified Data.ByteString as BS
+import Data.ByteString.Lazy (fromChunks, ByteString)
 import Data.Char
 import Debug.Trace
 import Text.Printf
@@ -24,7 +26,7 @@ data Channel = Channel { cid :: Word16, schema_id :: Word16, topic:: String, mes
     deriving (Read, Show, Eq);
 data Message = Message { channel_id :: Word16, sequence :: Word32, c_data :: BS.ByteString } -- no timestamps for now
     deriving (Read, Show, Eq);
-data Record = RecordHeader Header | RecordChannel Channel | RecordSchema Schema | RecordMessage Message
+data Record = RecordHeader Header | RecordChannel Channel | RecordSchema Schema | RecordMessage Message | RecordUnknown BS.ByteString
     deriving (Read, Show, Eq);
 
 fromS = map (fromInteger . toInteger . ord)
@@ -73,14 +75,16 @@ getMessage size = do
 getRecord :: Get Record
 getRecord = do
     opcode <- getWord8
-    size <- fromIntegral getWord64le
-    let recfunc = case opcode of {
+    size <- getWord64le
+    let
+        size = fromIntegral size
+        in case opcode of {
         0x01 -> RecordHeader <$> getHeader;
         0x03 -> RecordSchema <$> getSchema;
         0x04 -> RecordChannel <$> getChannel;
         0x05 -> RecordMessage <$> getMessage size;
-    }
-    recfunc
+        _ -> RecordUnknown <$> getByteString size;
+        }
 
 getRecords :: Get [Record]
 getRecords = do
@@ -93,9 +97,8 @@ getRecords = do
                 records <- getRecords
                 return $ record : records)
 
-
 parseMcap :: BS.ByteString -> [Record]
-parseMcap = Data.Binary.Get.runGet getRecords
+parseMcap bs = runGet getRecords (fromChunks [bs])
 
 
 main :: IO ()
@@ -106,12 +109,5 @@ main = do
         if not $ isMcap magic then putStrLn "not an mcap file: bad magic"
         else let records = parseMcap rest
             in print $ head records
-
-
-
-
-
-
-
 
 
